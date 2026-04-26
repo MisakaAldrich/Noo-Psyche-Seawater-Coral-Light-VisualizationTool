@@ -2,9 +2,10 @@ import './styles.css'
 import QRCode from 'qrcode'
 import jsQR from 'jsqr'
 
-const PREFIX = '323232323232#'
 const FIELDS = ['小时', '分钟', '白光', '深蓝光', '绿色光', 'UV', '浅蓝光', '红色光']
 const LIGHT_FIELDS = ['白光', '深蓝光', '绿色光', 'UV', '浅蓝光', '红色光']
+const DEFAULT_MANUAL_HEADER = '323232323232'
+const SUN_PROFILE_STORAGE_KEY = 'np-web-sun-profiles-v1'
 const LIMITS = {
   '小时': [0, 23], '分钟': [0, 59],
   '白光': [0, 100], '深蓝光': [0, 100], '绿色光': [0, 100],
@@ -45,7 +46,15 @@ const COLORS = {
   '红色光': ['#fee2e2', '#f87171'],
 }
 
-const state = { rows: [], qrVisible: true, decimalVisible: false }
+const state = {
+  rows: [],
+  qrVisible: true,
+  decimalVisible: false,
+  rawVisible: false,
+  manualHeader: DEFAULT_MANUAL_HEADER,
+  headerInputs: {},
+  sunTimes: null,
+}
 
 const app = document.getElementById('app')
 app.innerHTML = `
@@ -101,12 +110,12 @@ app.innerHTML = `
           </table>
         </div>
       </div>
-  <div class="card" style="margin-top:12px;">
+  <div class="card chart-card" style="margin-top:12px;">
     <div class="card-head">
       <div class="card-title">数据趋势图</div>
       <div class="card-sub">按 24 个时间点展示白光、蓝光、绿光、紫光、浅蓝、红光的变化趋势</div>
     </div>
-    <div class="card-body">
+    <div class="card-body chart-card-body">
       <div class="chart-wrap">
         <canvas id="trendChart"></canvas>
       </div>
@@ -117,6 +126,17 @@ app.innerHTML = `
     </div>
 
     <div class="right-col">
+      <div class="card footer-card">
+        <div class="card-body footer-body">
+          <div class="footer-line"><strong>Author:</strong> OpenAI ChatGPT · GPT-5.4 Thinking</div>
+          <div class="footer-line"><strong>Creator:</strong> <a href="https://github.com/MisakaAldrich/Noo-Psyche-Seawater-Coral-Light-VisualizationTool" target="_blank" rel="noopener noreferrer">https://github.com/MisakaAldrich/Noo-Psyche-Seawater-Coral-Light-VisualizationTool</a></div>
+          <div class="footer-line"><strong>Official Website:</strong> <a href="https://www.noo-psyche.com/" target="_blank" rel="noopener noreferrer">https://www.noo-psyche.com/</a></div>
+          <div class="footer-line"><strong>Copyright:</strong> © 2026 All rights reserved.</div>
+          <div class="footer-line">“Noo-Psyche”及其相关名称、标识、品牌识别元素，为佛山纽斯科技有限公司及其相关权利人所拥有、使用或主张权利的品牌名称、商标、商号或相关商业标识。</div>
+          <div class="footer-line">本项目为便捷使用与兼容性目的制作的非官方可视化/编辑工具页面；除非相关权利人另有明确声明，否则不代表官方网站、官方应用或官方背书产品。</div>
+        </div>
+      </div>
+
       <div class="qr-side" id="qrPanel">
         <div class="card qr-card">
           <div class="card-head">
@@ -140,12 +160,13 @@ app.innerHTML = `
             <button id="btnSps">应用 SPS</button>
             <button id="btnLps">应用 LPS</button>
             <button id="btnRefresh">刷新合成数据</button>
-            <button id="btnImportRaw">从原始串导入</button>
+            <button id="btnImportRaw">从原始串/设备报文导入</button>
             <label class="file-label toolbar-btn">从二维码图片导入<input id="qrFile" type="file" accept="image/*" /></label>
             <button id="btnCopyRaw">复制原始串</button>
             <button id="btnSaveQr">保存二维码 PNG</button>
             <button id="btnToggleDecimal">显示/隐藏输入</button>
             <button id="btnToggleQr">显示/隐藏二维码区</button>
+            <button id="btnToggleRaw">显示/隐藏原始串</button>
           </div>
           <div class="status" id="status">已就绪</div>
         </div>
@@ -153,10 +174,67 @@ app.innerHTML = `
 
       <div class="card">
         <div class="card-head">
-          <div class="card-title">汇总 / 原始串</div>
-          <div class="card-sub">完整格式：323232323232# + 24 组 16 位合成数据</div>
+          <div class="card-title">模拟日出日落</div>
+          <div class="card-sub">可直接填写开灯和关灯时间，或按经纬度与时区计算，用于模拟日出日落节奏并保存为常用预设</div>
         </div>
         <div class="card-body">
+          <div class="sun-grid sun-grid-3">
+            <label class="sun-item sun-item-wide">
+              <span>常用预设</span>
+              <select id="sunProfileSelect" class="sun-input"></select>
+            </label>
+            <label class="sun-item">
+              <span>预设名称</span>
+              <input id="sunProfileName" class="sun-input" type="text" placeholder="如 广州阳台" />
+            </label>
+            <label class="sun-item">
+              <span>时区</span>
+              <input id="sunTimezone" class="sun-input" type="text" placeholder="+08:00" />
+            </label>
+          </div>
+          <div class="toolbar-row sun-actions">
+            <button id="btnSaveSunProfile">保存预设</button>
+            <button id="btnDeleteSunProfile">删除预设</button>
+          </div>
+          <div class="sun-grid">
+            <label class="sun-item">
+              <span>开灯时间</span>
+              <input id="sunriseTime" class="sun-input" type="time" />
+            </label>
+            <label class="sun-item">
+              <span>关灯时间</span>
+              <input id="sunsetTime" class="sun-input" type="time" />
+            </label>
+          </div>
+          <div class="sun-grid">
+            <label class="sun-item">
+              <span>纬度</span>
+              <input id="sunLatText" class="sun-input" type="text" placeholder="23.1291 或 23°07'45&quot;N" />
+            </label>
+            <label class="sun-item">
+              <span>经度</span>
+              <input id="sunLonText" class="sun-input" type="text" placeholder="113.2644 或 113°15'52&quot;E" />
+            </label>
+          </div>
+          <div class="toolbar-row sun-actions">
+            <button id="btnCalcSunFromCoord">按经纬度计算时间</button>
+            <button id="btnApplySun">应用到当前方案</button>
+          </div>
+          <div class="muted" id="sunInfo">可直接填写开灯/关灯时间；经纬度支持十进制和度分秒格式；时区填写类似 +08:00 的偏移；预设保存在当前浏览器。</div>
+        </div>
+      </div>
+
+      <div class="card hidden" id="rawCard">
+        <div class="card-head">
+          <div class="card-title">汇总 / 原始串</div>
+          <div class="card-sub">完整格式：手动模式六通道亮度（十进制输入，写入为 12 位 HEX） + # + 24 组 16 位合成数据</div>
+        </div>
+        <div class="card-body">
+          <div class="manual-head-box">
+            <div class="manual-head-title">手动模式六通道亮度（十进制）</div>
+            <div class="manual-head-grid" id="manualHeadGrid"></div>
+            <div class="muted">按 白光 / 深蓝光 / 绿色光 / UV / 浅蓝光 / 红色光 顺序输入 0-100，生成原始串时会自动转换为每通道 2 位 HEX。</div>
+          </div>
           <textarea id="rawBox" class="raw-box"></textarea>
           <div class="toolbar-row" style="margin-top:8px">
             <button id="btnFromTable">从表格刷新原始串</button>
@@ -166,16 +244,6 @@ app.innerHTML = `
         </div>
       </div>
 
-      <div class="card footer-card">
-        <div class="card-body footer-body">
-          <div class="footer-line"><strong>Author:</strong> OpenAI ChatGPT · GPT-5.4 Thinking</div>
-          <div class="footer-line"><strong>Creator:</strong> <a href="https://github.com/MisakaAldrich/Noo-Psyche-Seawater-Coral-Light-VisualizationTool" target="_blank" rel="noopener noreferrer">https://github.com/MisakaAldrich/Noo-Psyche-Seawater-Coral-Light-VisualizationTool</a></div>
-          <div class="footer-line"><strong>Official Website:</strong> <a href="https://www.noo-psyche.com/" target="_blank" rel="noopener noreferrer">https://www.noo-psyche.com/</a></div>
-          <div class="footer-line"><strong>Copyright:</strong> © 2026 All rights reserved.</div>
-          <div class="footer-line">“Noo-Psyche”及其相关名称、标识、品牌识别元素，为佛山纽斯科技有限公司及其相关权利人所拥有、使用或主张权利的品牌名称、商标、商号或相关商业标识。</div>
-          <div class="footer-line">本项目为便捷使用与兼容性目的制作的非官方可视化/编辑工具页面；除非相关权利人另有明确声明，否则不代表官方网站、官方应用或官方背书产品。</div>
-        </div>
-      </div>
       </div>
       </div>
 </div>
@@ -187,6 +255,168 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, n))
 }
 function cleanText(text) { return String(text || '').replace(/\t|\r|\n/g, '').trim() }
+function parseHexByte(text) { return Number.parseInt(text, 16) }
+function decimalToHexByte(value) { return clamp(value, 0, 100).toString(16).padStart(2, '0') }
+function formatMinutes(totalMinutes) {
+  const mins = Math.max(0, Math.min(1439, Math.round(totalMinutes)))
+  const hour = Math.floor(mins / 60)
+  const minute = mins % 60
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+function parseTimeInput(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || ''))
+  if (!match) throw new Error('时间格式必须是 HH:MM')
+  const hour = Number.parseInt(match[1], 10)
+  const minute = Number.parseInt(match[2], 10)
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) throw new Error('时间超出有效范围')
+  return hour * 60 + minute
+}
+function getBrowserTimezoneOffsetText() {
+  const minutes = -new Date().getTimezoneOffset()
+  const sign = minutes >= 0 ? '+' : '-'
+  const abs = Math.abs(minutes)
+  const hour = Math.floor(abs / 60)
+  const minute = abs % 60
+  return `${sign}${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+function parseTimezoneOffset(value) {
+  const text = cleanText(value)
+  const match = /^([+-])(\d{2})(?::?(\d{2}))?$/.exec(text)
+  if (!match) throw new Error('时区格式必须是 +08:00 或 -0530')
+  const sign = match[1] === '+' ? 1 : -1
+  const hour = Number.parseInt(match[2], 10)
+  const minute = Number.parseInt(match[3] || '00', 10)
+  if (hour > 14 || minute > 59) throw new Error('时区偏移超出有效范围')
+  return sign * (hour + minute / 60)
+}
+function toRadians(deg) { return deg * Math.PI / 180 }
+function toDegrees(rad) { return rad * 180 / Math.PI }
+function getSunProfiles() {
+  try {
+    const raw = localStorage.getItem(SUN_PROFILE_STORAGE_KEY)
+    const list = JSON.parse(raw || '[]')
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+function setSunProfiles(list) {
+  localStorage.setItem(SUN_PROFILE_STORAGE_KEY, JSON.stringify(list))
+}
+function parseCoordinate(text, kind) {
+  const raw = cleanText(text).toUpperCase()
+  if (!raw) throw new Error(`${kind}不能为空`)
+
+  const decimalMatch = raw.match(/^[NSEW]?[\+\-]?\d+(?:\.\d+)?[NSEW]?$/)
+  if (decimalMatch) {
+    let sign = 1
+    if (/[SW]/.test(raw)) sign = -1
+    if (/^-/.test(raw)) sign = -1
+    const value = Number.parseFloat(raw.replace(/[NSEW]/g, ''))
+    if (!Number.isFinite(value)) throw new Error(`${kind}格式无效`)
+    return sign * Math.abs(value)
+  }
+
+  const dirMatch = raw.match(/[NSEW]/)
+  const direction = dirMatch ? dirMatch[0] : ''
+  const nums = raw.match(/\d+(?:\.\d+)?/g)
+  if (!nums || nums.length < 1) throw new Error(`${kind}格式无效`)
+  const deg = Number.parseFloat(nums[0] || '0')
+  const min = Number.parseFloat(nums[1] || '0')
+  const sec = Number.parseFloat(nums[2] || '0')
+  let value = deg + min / 60 + sec / 3600
+  if (direction === 'S' || direction === 'W') value *= -1
+  if (/^-/.test(raw)) value *= -1
+  return value
+}
+function calculateSunEvent(isSunrise, lat, lon, timezoneOffsetHours) {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), 0, 0)
+  const dayOfYear = Math.floor((now - start) / 86400000)
+  const lngHour = lon / 15
+  const t = dayOfYear + ((isSunrise ? 6 : 18) - lngHour) / 24
+  const M = 0.9856 * t - 3.289
+  let L = M + 1.916 * Math.sin(toRadians(M)) + 0.02 * Math.sin(toRadians(2 * M)) + 282.634
+  L = ((L % 360) + 360) % 360
+
+  let RA = toDegrees(Math.atan(0.91764 * Math.tan(toRadians(L))))
+  RA = ((RA % 360) + 360) % 360
+  const Lquadrant = Math.floor(L / 90) * 90
+  const RAquadrant = Math.floor(RA / 90) * 90
+  RA = (RA + Lquadrant - RAquadrant) / 15
+
+  const sinDec = 0.39782 * Math.sin(toRadians(L))
+  const cosDec = Math.cos(Math.asin(sinDec))
+  const cosH = (Math.cos(toRadians(90.833)) - sinDec * Math.sin(toRadians(lat))) / (cosDec * Math.cos(toRadians(lat)))
+
+  if (cosH > 1) throw new Error('该坐标当前日期无日出')
+  if (cosH < -1) throw new Error('该坐标当前日期无日落')
+
+  let H = isSunrise ? 360 - toDegrees(Math.acos(cosH)) : toDegrees(Math.acos(cosH))
+  H /= 15
+
+  const T = H + RA - 0.06571 * t - 6.622
+  let UT = T - lngHour
+  UT = ((UT % 24) + 24) % 24
+  const localHours = UT + timezoneOffsetHours
+  return Math.round((((localHours % 24) + 24) % 24) * 60)
+}
+function calculateSunTimesFromCoordinates(latText, lonText) {
+  const lat = parseCoordinate(latText, '纬度')
+  const lon = parseCoordinate(lonText, '经度')
+  const timezoneText = document.getElementById('sunTimezone').value
+  const timezoneOffsetHours = parseTimezoneOffset(timezoneText)
+  if (lat < -90 || lat > 90) throw new Error('纬度必须在 -90 到 90 之间')
+  if (lon < -180 || lon > 180) throw new Error('经度必须在 -180 到 180 之间')
+  return {
+    sunrise: calculateSunEvent(true, lat, lon, timezoneOffsetHours),
+    sunset: calculateSunEvent(false, lat, lon, timezoneOffsetHours),
+    lat,
+    lon,
+    timezoneText,
+  }
+}
+function normalizeManualHeader(text) {
+  const clean = cleanText(text).replace(/#/g, '').toLowerCase()
+  if (!/^[0-9a-f]{12}$/.test(clean)) throw new Error('手动模式六通道亮度头必须是 12 位 HEX')
+  return clean
+}
+function normalizeHexStream(text) {
+  const clean = cleanText(text).replace(/\s+/g, '').toLowerCase()
+  if (!/^[0-9a-f#]+$/.test(clean)) throw new Error('输入包含非 HEX / # 字符')
+  return clean
+}
+function splitRaw(raw) {
+  if (!raw.includes('#')) throw new Error('缺少 # 分隔符')
+  const [header, payload] = raw.split('#')
+  return { header: normalizeManualHeader(header), payload: cleanText(payload).toLowerCase() }
+}
+function parseDevicePacket(raw) {
+  const clean = normalizeHexStream(raw)
+  if (!clean.startsWith('abaa')) throw new Error('设备报文缺少 abaa 起始标记')
+  if (!clean.endsWith('bb')) throw new Error('设备报文缺少 bb 结束标记')
+  if (clean.length < 22) throw new Error('设备报文长度不足')
+
+  const header = normalizeManualHeader(clean.slice(8, 20))
+  const groupCount = parseInt(clean.slice(20, 22), 16)
+  if (!Number.isFinite(groupCount) || groupCount <= 0) throw new Error('设备报文分组数无效')
+
+  const payloadStart = 22
+  const payloadEnd = payloadStart + groupCount * 16
+  if (clean.length < payloadEnd + 2) throw new Error('设备报文中的时序数据不完整')
+
+  return {
+    header,
+    payload: clean.slice(payloadStart, payloadEnd),
+    source: 'device-packet',
+    groupCount,
+  }
+}
+function extractLightingData(raw) {
+  const clean = normalizeHexStream(raw)
+  if (clean.includes('#')) return { ...splitRaw(clean), source: 'raw-string', groupCount: 24 }
+  return parseDevicePacket(clean)
+}
 function chunk16(payload) {
   if (payload.length % 16 !== 0) throw new Error("'#' 后的数据长度不是 16 的倍数")
   const arr = []
@@ -208,6 +438,213 @@ function composeGroup(vals) {
 }
 function setStatus(msg) { document.getElementById('status').textContent = msg }
 
+function composeManualHeader() {
+  return LIGHT_FIELDS.map((field) => decimalToHexByte(state.headerInputs[field]?.value || 0)).join('')
+}
+
+function syncManualHeaderInputs(header = state.manualHeader) {
+  LIGHT_FIELDS.forEach((field, idx) => {
+    const value = parseHexByte(header.slice(idx * 2, idx * 2 + 2))
+    if (state.headerInputs[field]) state.headerInputs[field].value = clamp(value, 0, 100)
+  })
+}
+
+function refreshManualHeader(trigger = true) {
+  try {
+    const header = normalizeManualHeader(composeManualHeader())
+    state.manualHeader = header
+    syncManualHeaderInputs(header)
+    if (trigger) updateRawText()
+  } catch (e) {
+    setStatus(e.message)
+  }
+}
+
+function buildManualHeaderEditor() {
+  const grid = document.getElementById('manualHeadGrid')
+  grid.innerHTML = ''
+  LIGHT_FIELDS.forEach((field, idx) => {
+    const item = document.createElement('label')
+    item.className = 'manual-head-item'
+    item.innerHTML = `<span>${field}</span>`
+    const input = document.createElement('input')
+    input.className = 'manual-head-input'
+    input.type = 'number'
+    input.min = '0'
+    input.max = '100'
+    input.step = '1'
+    input.inputMode = 'numeric'
+    input.value = clamp(parseHexByte(state.manualHeader.slice(idx * 2, idx * 2 + 2)), 0, 100)
+    input.addEventListener('input', () => {
+      input.value = String(clamp(input.value, 0, 100))
+      refreshManualHeader()
+    })
+    input.addEventListener('blur', () => {
+      input.value = String(clamp(input.value, 0, 100))
+      refreshManualHeader()
+    })
+    item.appendChild(input)
+    grid.appendChild(item)
+    state.headerInputs[field] = input
+  })
+}
+
+function updateSunInfo(text) {
+  const el = document.getElementById('sunInfo')
+  if (el) el.textContent = text
+}
+function renderSunProfileOptions() {
+  const select = document.getElementById('sunProfileSelect')
+  if (!select) return
+  const profiles = getSunProfiles()
+  select.innerHTML = '<option value="">未选择预设</option>'
+  profiles.forEach((profile, index) => {
+    const option = document.createElement('option')
+    option.value = String(index)
+    option.textContent = profile.name
+    select.appendChild(option)
+  })
+}
+function fillSunFormFromProfile(profile) {
+  document.getElementById('sunProfileName').value = profile.name || ''
+  document.getElementById('sunriseTime').value = formatMinutes(profile.sunrise)
+  document.getElementById('sunsetTime').value = formatMinutes(profile.sunset)
+  document.getElementById('sunLatText').value = profile.latText || ''
+  document.getElementById('sunLonText').value = profile.lonText || ''
+  document.getElementById('sunTimezone').value = profile.timezoneText || getBrowserTimezoneOffsetText()
+  state.sunTimes = { sunrise: profile.sunrise, sunset: profile.sunset }
+  updateSunInfo(`已载入预设：${profile.name} | ${document.getElementById('sunTimezone').value} 开灯 ${formatMinutes(profile.sunrise)} | 关灯 ${formatMinutes(profile.sunset)}`)
+}
+
+function readSunTimesFromForm() {
+  const sunrise = parseTimeInput(document.getElementById('sunriseTime').value)
+  const sunset = parseTimeInput(document.getElementById('sunsetTime').value)
+  const timezoneText = cleanText(document.getElementById('sunTimezone').value)
+  parseTimezoneOffset(timezoneText)
+  if (sunrise >= sunset) throw new Error('日出时间必须早于日落时间')
+  const times = { sunrise, sunset }
+  state.sunTimes = times
+  updateSunInfo(`${timezoneText} 日出 ${formatMinutes(times.sunrise)} | 日落 ${formatMinutes(times.sunset)}`)
+  setStatus('已读取手动输入的开灯和关灯时间')
+  return times
+}
+function computeSunTimesFromCoordinateForm() {
+  const latText = document.getElementById('sunLatText').value
+  const lonText = document.getElementById('sunLonText').value
+  const result = calculateSunTimesFromCoordinates(latText, lonText)
+  document.getElementById('sunriseTime').value = formatMinutes(result.sunrise)
+  document.getElementById('sunsetTime').value = formatMinutes(result.sunset)
+  state.sunTimes = { sunrise: result.sunrise, sunset: result.sunset }
+  updateSunInfo(`已按经纬度计算 ${result.timezoneText} 开灯 ${formatMinutes(result.sunrise)} | 关灯 ${formatMinutes(result.sunset)}`)
+  setStatus('已按经纬度计算时间')
+  return result
+}
+function saveCurrentSunProfile() {
+  const name = cleanText(document.getElementById('sunProfileName').value)
+  if (!name) throw new Error('请先填写预设名称')
+  const times = readSunTimesFromForm()
+  const latText = cleanText(document.getElementById('sunLatText').value)
+  const lonText = cleanText(document.getElementById('sunLonText').value)
+  const timezoneText = cleanText(document.getElementById('sunTimezone').value)
+  const profiles = getSunProfiles().filter((item) => item.name !== name)
+  profiles.unshift({ name, latText, lonText, timezoneText, sunrise: times.sunrise, sunset: times.sunset })
+  setSunProfiles(profiles.slice(0, 20))
+  renderSunProfileOptions()
+  document.getElementById('sunProfileSelect').value = '0'
+  setStatus(`已保存预设：${name}`)
+}
+function loadSelectedSunProfile() {
+  const index = Number.parseInt(document.getElementById('sunProfileSelect').value, 10)
+  const profiles = getSunProfiles()
+  if (!Number.isInteger(index) || index < 0 || index >= profiles.length) throw new Error('请先选择预设')
+  fillSunFormFromProfile(profiles[index])
+  setStatus(`已载入预设：${profiles[index].name}`)
+}
+function deleteSelectedSunProfile() {
+  const index = Number.parseInt(document.getElementById('sunProfileSelect').value, 10)
+  const profiles = getSunProfiles()
+  if (!Number.isInteger(index) || index < 0 || index >= profiles.length) throw new Error('请先选择预设')
+  const [removed] = profiles.splice(index, 1)
+  setSunProfiles(profiles)
+  renderSunProfileOptions()
+  document.getElementById('sunProfileName').value = ''
+  setStatus(`已删除预设：${removed.name}`)
+}
+
+function getRowTotalMinutes(row, index) {
+  const minute = clamp(row.minuteInput?.value, 0, 59)
+  return index * 60 + minute
+}
+
+function sampleProfile(rows, sourceIndex) {
+  if (!rows.length) return Object.fromEntries(LIGHT_FIELDS.map((field) => [field, 0]))
+  if (rows.length === 1) return { ...rows[0] }
+
+  const lo = Math.floor(sourceIndex)
+  const hi = Math.min(rows.length - 1, Math.ceil(sourceIndex))
+  const ratio = sourceIndex - lo
+  const sampled = {}
+  for (const field of LIGHT_FIELDS) {
+    const a = Number(rows[lo][field] || 0)
+    const b = Number(rows[hi][field] || 0)
+    sampled[field] = Math.round(a + (b - a) * ratio)
+  }
+  return sampled
+}
+
+function findActiveRange() {
+  const activeIndexes = state.rows
+    .map((row, idx) => ({ row, idx }))
+    .filter(({ row }) => LIGHT_FIELDS.some((field) => Number(row.values[field] || 0) > 0))
+    .map(({ idx }) => idx)
+  if (!activeIndexes.length) throw new Error('当前方案没有非零亮度区间')
+  return [activeIndexes[0], activeIndexes[activeIndexes.length - 1]]
+}
+
+function applySunAlignment() {
+  const times = state.sunTimes || readSunTimesFromForm()
+  if (times.sunrise >= times.sunset) throw new Error('当前仅支持“日出到日落”的白天方案')
+  const [startIdx, endIdx] = findActiveRange()
+  const activeRows = state.rows.slice(startIdx, endIdx + 1).map((row) => {
+    const values = {}
+    for (const field of LIGHT_FIELDS) values[field] = Number(row.values[field] || 0)
+    return values
+  })
+
+  const targetStartHour = Math.floor(times.sunrise / 60)
+  const targetEndHour = Math.floor(times.sunset / 60)
+  if (targetEndHour < targetStartHour) throw new Error('日出日落小时区间无效')
+
+  const targetSpan = targetEndHour - targetStartHour
+  const sourceSpan = Math.max(1, activeRows.length - 1)
+
+  state.rows.forEach((row, idx) => {
+    row.minuteInput.value = '0'
+    for (const field of LIGHT_FIELDS) {
+      row.values[field] = 0
+      row.sliders[field].setValue(0, false)
+      row.decimalInputs[field].value = 0
+    }
+
+    if (idx < targetStartHour || idx > targetEndHour) return
+
+    const ratio = targetSpan === 0 ? 0 : (idx - targetStartHour) / targetSpan
+    const sampled = sampleProfile(activeRows, ratio * sourceSpan)
+    for (const field of LIGHT_FIELDS) {
+      row.values[field] = sampled[field]
+      row.sliders[field].setValue(sampled[field], false)
+      row.decimalInputs[field].value = sampled[field]
+    }
+  })
+
+  state.rows[targetStartHour].minuteInput.value = String(times.sunrise % 60)
+  state.rows[targetEndHour].minuteInput.value = String(times.sunset % 60)
+  refreshAll()
+  const timezoneText = cleanText(document.getElementById('sunTimezone').value)
+  updateSunInfo(`已按 ${timezoneText} 日出 ${formatMinutes(times.sunrise)} / 日落 ${formatMinutes(times.sunset)} 调整当前方案`)
+  setStatus('已按日出日落调整当前方案，24 小时结构保持完整')
+}
+
 
 function renderChartLegend() {
   const legend = document.getElementById('chartLegend')
@@ -219,6 +656,18 @@ function renderChartLegend() {
     item.innerHTML = `<span class="chart-legend-dot" style="background:${COLORS[field][1]}"></span><span>${field}</span>`
     legend.appendChild(item)
   }
+}
+
+function syncChartCardHeight() {
+  const rightCol = document.querySelector('.right-col')
+  const chartCard = document.querySelector('.chart-card')
+  if (!rightCol || !chartCard) return
+
+  const rightRect = rightCol.getBoundingClientRect()
+  const chartRect = chartCard.getBoundingClientRect()
+  const target = Math.max(220, Math.floor(rightRect.bottom - chartRect.top))
+
+  chartCard.style.height = `${target}px`
 }
 
 function renderTrendChart() {
@@ -430,7 +879,7 @@ function setRowFromGroup(r, group) {
   const vals = parseGroup(group)
   const row = state.rows[r]
   FIELDS.forEach((field, idx) => {
-    let v = vals[idx]
+    let v = field === '小时' ? r : vals[idx]
     const [lo, hi] = LIMITS[field]
     v = clamp(v, lo, hi)
     row.values[field] = v
@@ -473,10 +922,10 @@ function copyToNextRow(r) {
 
 function updateRawText() {
   const groups = state.rows.map(r => r.composeInput.value.trim().toLowerCase())
-  const raw = PREFIX + groups.join('')
+  const raw = `${state.manualHeader}#${groups.join('')}`
   document.getElementById('rawBox').value = raw
   const payloadLen = raw.includes('#') ? raw.split('#')[1].length : 0
-  document.getElementById('lengthInfo').textContent = `总长度: ${raw.length} | 照明参数长度: ${payloadLen} | 分组数: ${Math.floor(payloadLen / 16)}`
+  document.getElementById('lengthInfo').textContent = `头部长度: ${state.manualHeader.length} | 总长度: ${raw.length} | 照明参数长度: ${payloadLen} | 分组数: ${Math.floor(payloadLen / 16)}`
   scheduleQrRefresh()
 }
 
@@ -520,15 +969,16 @@ function saveQr() {
 function applyRawToTable() {
   const raw = cleanText(document.getElementById('rawBox').value)
   try {
-    if (!raw.includes('#')) throw new Error('缺少 # 分隔符')
-    const payload = raw.split('#')[1]
+    const { header, payload, source, groupCount } = extractLightingData(raw)
     const groups = chunk16(payload)
-    if (groups.length !== 24) throw new Error(`当前是 ${groups.length} 组，不是 24 组`)
+    if (groups.length !== 24) throw new Error(`当前是 ${groupCount || groups.length} 组，不是 24 组`)
+    state.manualHeader = header
+    syncManualHeaderInputs(header)
     groups.forEach((g, i) => setRowFromGroup(i, g))
     updateRawText()
     generateQr()
     renderTrendChart()
-    setStatus('已从原始串回填表格')
+    setStatus(source === 'device-packet' ? '已从设备报文导入并回填表格' : '已从原始串回填表格')
   } catch (e) {
     alert('导入失败：' + e.message)
   }
@@ -558,6 +1008,12 @@ function toggleQrPanel() {
   document.getElementById('qrPanel').classList.toggle('hidden', !state.qrVisible)
   if (state.qrVisible) generateQr()
   setStatus(state.qrVisible ? '已显示二维码区' : '已隐藏二维码区')
+}
+
+function toggleRawPanel() {
+  state.rawVisible = !state.rawVisible
+  document.getElementById('rawCard').classList.toggle('hidden', !state.rawVisible)
+  setStatus(state.rawVisible ? '已显示原始串区' : '已隐藏原始串区')
 }
 
 function toggleDecimalInputs() {
@@ -601,11 +1057,24 @@ function loadDefaultData() {
 }
 
 function wireActions() {
+  document.getElementById('sunriseTime').value = '06:00'
+  document.getElementById('sunsetTime').value = '18:00'
+  document.getElementById('sunTimezone').value = getBrowserTimezoneOffsetText()
+  renderSunProfileOptions()
+  document.getElementById('sunProfileSelect').addEventListener('change', () => {
+    const value = document.getElementById('sunProfileSelect').value
+    if (!value) return
+    try {
+      loadSelectedSunProfile()
+    } catch (e) {
+      setStatus(e.message)
+    }
+  })
   document.getElementById('btnDefault').onclick = loadDefaultData
   document.getElementById('btnSps').onclick = () => applyPreset(SPS_GROUPS, 'SPS')
   document.getElementById('btnLps').onclick = () => applyPreset(LPS_GROUPS, 'LPS')
   document.getElementById('btnImportRaw').onclick = () => {
-    const raw = prompt('请粘贴完整原始串：', cleanText(document.getElementById('rawBox').value) || PREFIX)
+    const raw = prompt('请粘贴完整原始串或设备报文：', cleanText(document.getElementById('rawBox').value) || `${state.manualHeader}#`)
     if (raw != null) {
       document.getElementById('rawBox').value = cleanText(raw)
       applyRawToTable()
@@ -613,18 +1082,64 @@ function wireActions() {
   }
   document.getElementById('qrFile').addEventListener('change', (e) => importQrImage(e.target.files[0]))
   document.getElementById('btnToggleQr').onclick = toggleQrPanel
+  document.getElementById('btnToggleRaw').onclick = toggleRawPanel
   document.getElementById('btnToggleDecimal').onclick = toggleDecimalInputs
   document.getElementById('btnRefresh').onclick = refreshAll
   document.getElementById('btnSaveQr').onclick = saveQr
   document.getElementById('btnCopyRaw').onclick = copyRaw
   document.getElementById('btnFromTable').onclick = refreshAll
   document.getElementById('btnApplyRaw').onclick = applyRawToTable
+  document.getElementById('btnCalcSunFromCoord').onclick = () => {
+    try {
+      computeSunTimesFromCoordinateForm()
+    } catch (e) {
+      setStatus(e.message)
+    }
+  }
+  document.getElementById('btnApplySun').onclick = () => {
+    try {
+      applySunAlignment()
+    } catch (e) {
+      setStatus(e.message)
+    }
+  }
+  document.getElementById('btnSaveSunProfile').onclick = () => {
+    try {
+      saveCurrentSunProfile()
+    } catch (e) {
+      setStatus(e.message)
+    }
+  }
+  document.getElementById('btnDeleteSunProfile').onclick = () => {
+    try {
+      deleteSelectedSunProfile()
+    } catch (e) {
+      setStatus(e.message)
+    }
+  }
   document.getElementById('rawBox').addEventListener('input', scheduleQrRefresh)
   window.addEventListener('resize', scheduleQrRefresh)
 }
 
 buildRows()
+buildManualHeaderEditor()
 wireActions()
 renderChartLegend()
 loadDefaultData()
-window.addEventListener('resize', renderTrendChart)
+syncChartCardHeight()
+const chartWrap = document.querySelector('.chart-wrap')
+if (chartWrap && 'ResizeObserver' in window) {
+  const resizeObserver = new ResizeObserver(() => {
+    syncChartCardHeight()
+    renderTrendChart()
+  })
+  resizeObserver.observe(chartWrap)
+  const rightCol = document.querySelector('.right-col')
+  if (rightCol) resizeObserver.observe(rightCol)
+  const rawCard = document.getElementById('rawCard')
+  if (rawCard) resizeObserver.observe(rawCard)
+}
+window.addEventListener('resize', () => {
+  syncChartCardHeight()
+  renderTrendChart()
+})

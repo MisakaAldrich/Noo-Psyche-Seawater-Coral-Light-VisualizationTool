@@ -602,7 +602,7 @@ function findActiveRange() {
 }
 
 function applySunAlignment() {
-  const times = state.sunTimes || readSunTimesFromForm()
+  const times = readSunTimesFromForm()
   if (times.sunrise >= times.sunset) throw new Error('当前仅支持“日出到日落”的白天方案')
   const [startIdx, endIdx] = findActiveRange()
   const activeRows = state.rows.slice(startIdx, endIdx + 1).map((row) => {

@@ -615,7 +615,8 @@ function applySunAlignment() {
   const targetEndHour = Math.floor(times.sunset / 60)
   if (targetEndHour < targetStartHour) throw new Error('日出日落小时区间无效')
 
-  const targetSpan = targetEndHour - targetStartHour
+  const lastLitHour = Math.max(targetStartHour, targetEndHour - 1)
+  const targetSpan = Math.max(0, lastLitHour - targetStartHour)
   const sourceSpan = Math.max(1, activeRows.length - 1)
 
   state.rows.forEach((row, idx) => {
@@ -626,7 +627,7 @@ function applySunAlignment() {
       row.decimalInputs[field].value = 0
     }
 
-    if (idx < targetStartHour || idx > targetEndHour) return
+    if (idx < targetStartHour || idx > lastLitHour) return
 
     const ratio = targetSpan === 0 ? 0 : (idx - targetStartHour) / targetSpan
     const sampled = sampleProfile(activeRows, ratio * sourceSpan)
@@ -639,6 +640,11 @@ function applySunAlignment() {
 
   state.rows[targetStartHour].minuteInput.value = String(times.sunrise % 60)
   state.rows[targetEndHour].minuteInput.value = String(times.sunset % 60)
+  for (const field of LIGHT_FIELDS) {
+    state.rows[targetEndHour].values[field] = 0
+    state.rows[targetEndHour].sliders[field].setValue(0, false)
+    state.rows[targetEndHour].decimalInputs[field].value = 0
+  }
   refreshAll()
   const timezoneText = cleanText(document.getElementById('sunTimezone').value)
   updateSunInfo(`已按 ${timezoneText} 日出 ${formatMinutes(times.sunrise)} / 日落 ${formatMinutes(times.sunset)} 调整当前方案`)
